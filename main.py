@@ -6,18 +6,34 @@ import cv2
 import numpy as np
 import mediapipe as mp
 import pyautogui
-from PIL import Image
 import os
 import time
 
-# --- CONFIGURATION AND INITIALIZATION ---
+# --- CONFIGURATION ---
 
-# 1. Folder to save screenshots
+# The directory where screenshots will be saved.
 SCREENSHOTS_DIR = "screenshots"
+
+# Defines how close to the webcam edge a hand must be to snap to the screen edge.
+EDGE_MARGIN = 0.08  # 8% of the width/height
+
+# Controls the smoothness of the selection rectangle's movement.
+# A lower value results in smoother motion but introduces more lag.
+SMOOTHING_FACTOR = 0.2
+
+# The duration of the capture countdown in seconds.
+CAPTURE_COUNTDOWN_SECONDS = 3
+
+# The cooldown period between taking screenshots.
+SCREENSHOT_COOLDOWN = 3
+
+# --- INITIALIZATION ---
+
+# Ensure the directory for saving screenshots exists.
 if not os.path.exists(SCREENSHOTS_DIR):
     os.makedirs(SCREENSHOTS_DIR)
 
-# 2. MediaPipe Hands Initialization
+# Initialize MediaPipe Hands for hand tracking.
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
@@ -27,17 +43,14 @@ hands = mp_hands.Hands(
 )
 mp_drawing = mp.solutions.drawing_utils
 
-# 3. Screen and Webcam Setup
-# Get screen dimensions
+# Set up screen and webcam dimensions.
 SCREEN_WIDTH, SCREEN_HEIGHT = pyautogui.size()
-
-# Start webcam capture
 cap = cv2.VideoCapture(0)
+
 if not cap.isOpened():
     print("Error: Could not open webcam.")
     exit()
 
-# Get webcam frame dimensions
 ret, frame = cap.read()
 if not ret:
     print("Error: Could not read frame from webcam.")
@@ -45,158 +58,195 @@ if not ret:
     exit()
 WEBCAM_HEIGHT, WEBCAM_WIDTH, _ = frame.shape
 
-# 4. Gesture Control Variables
-PINCH_THRESHOLD = 30  # Max distance in pixels between thumb and index for a pinch
-SCREENSHOT_COOLDOWN = 3  # Seconds between screenshots
+# --- APPLICATION STATE VARIABLES ---
+
+# Stores the smoothed corner coordinates of the selection box.
+smoothed_coords = None
+
+# Tracks whether the application is in capture mode (countdown active).
+is_capture_mode = False
+countdown_start_time = 0
+
+# Stores the screen region that is locked in for capture.
+locked_region = None
+
+# Tracks the last time a screenshot was taken to manage cooldown.
 last_screenshot_time = 0
+
+# Tracks the last time hands were successfully detected to prevent flickering.
+last_detection_time = 0
 
 
 # --- HELPER FUNCTIONS ---
 
-def draw_text(frame, text, position, color=(0, 255, 0), font_scale=1, thickness=2):
-    """Draws text with a black outline for better visibility."""
-    cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness + 2)
+def draw_text(frame, text, position, color=(255, 255, 255), font_scale=1, thickness=2):
+    """Draws text with a black outline for better visibility on any background."""
+    cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness + 3)
     cv2.putText(frame, text, position, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
 
 
-# --- MAIN APPLICATION LOOP ---
+def is_pinky_up(hand_landmarks):
+    """
+    Checks if the pinky finger is extended upwards.
+    Returns True if the pinky tip's y-coordinate is significantly above its base knuckle.
+    """
+    if not hand_landmarks:
+        return False
 
+    pinky_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
+    pinky_mcp = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_MCP]  # The knuckle at the base
+
+    # In MediaPipe, a lower y-coordinate means higher up on the landmark map.
+    return pinky_tip.y < pinky_mcp.y
+
+
+# --- MAIN APPLICATION LOOP ---
 try:
-    preview_window_open = False  # Track the state of the preview window
+    preview_window_open = False
     while True:
         ret, frame = cap.read()
-        if not ret:
-            break
+        if not ret: break
+        frame = cv2.flip(frame, 1)  # Mirror the frame for a more intuitive experience
 
-        # Flip the frame horizontally for a mirror effect
-        frame = cv2.flip(frame, 1)
-        # Create a copy to draw the overlay on
-        overlay_frame = frame.copy()
-
-        # Convert the BGR image to RGB for MediaPipe
+        # Convert frame to RGB for MediaPipe processing.
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_frame)
 
-        # Variables to store hand landmarks and pinch status
-        left_hand_landmarks = None
-        right_hand_landmarks = None
-        is_left_pinch = False
-        is_right_pinch = False
+        # Reset hand tracking variables for the current frame.
+        left_hand_landmarks, right_hand_landmarks = None, None
 
         if results.multi_hand_landmarks and len(results.multi_hand_landmarks) <= 2:
             for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                # Draw landmarks on the original frame
                 mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                label = results.multi_handedness[hand_idx].classification[0].label
 
-                # Identify left vs. right hand
-                hand_label = results.multi_handedness[hand_idx].classification[0].label
-
-                # Get thumb and index finger tip coordinates
-                thumb_tip = hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-                index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-
-                # Convert to pixel coordinates
-                x_thumb, y_thumb = int(thumb_tip.x * WEBCAM_WIDTH), int(thumb_tip.y * WEBCAM_HEIGHT)
-                x_index, y_index = int(index_tip.x * WEBCAM_WIDTH), int(index_tip.y * WEBCAM_HEIGHT)
-
-                # Calculate distance for pinch detection
-                pinch_dist = np.hypot(x_thumb - x_index, y_thumb - y_index)
-
-                if hand_label == "Left":
+                if label == "Left":
                     left_hand_landmarks = hand_landmarks
-                    if pinch_dist < PINCH_THRESHOLD:
-                        is_left_pinch = True
-                elif hand_label == "Right":
+                else:
                     right_hand_landmarks = hand_landmarks
-                    if pinch_dist < PINCH_THRESHOLD:
-                        is_right_pinch = True
 
-        # Check if both hands are detected to define the screenshot area
+        # --- SELECTION AND CAPTURE LOGIC ---
+        # This block runs only when both hands are visible on screen.
         if left_hand_landmarks and right_hand_landmarks:
-            # Extract the 4 key points (thumbs and index fingers)
-            left_thumb = left_hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-            left_index = left_hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            right_thumb = right_hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-            right_index = right_hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            last_detection_time = time.time()  # Update timestamp for hand detection
 
-            points = [left_thumb, left_index, right_thumb, right_index]
+            # Define the four corners of the selection area using thumbs and index fingers.
+            points = [
+                left_hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP],
+                right_hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP],
+                right_hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP],
+                left_hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP]
+            ]
 
-            screen_coords = [(p.x * SCREEN_WIDTH, p.y * SCREEN_HEIGHT) for p in points]
-            frame_coords = [(int(p.x * WEBCAM_WIDTH), int(p.y * WEBCAM_HEIGHT)) for p in points]
+            # --- Edge Snapping ---
+            # If a hand is near the edge, snap the selection to the full screen dimension.
+            is_snapped = False
+            raw_coords = []
+            for p in points:
+                nx, ny = p.x, p.y
+                if nx < EDGE_MARGIN:
+                    nx = 0.0; is_snapped = True
+                elif nx > 1 - EDGE_MARGIN:
+                    nx = 1.0; is_snapped = True
+                if ny < EDGE_MARGIN:
+                    ny = 0.0; is_snapped = True
+                elif ny > 1 - EDGE_MARGIN:
+                    ny = 1.0; is_snapped = True
+                raw_coords.append((nx * SCREEN_WIDTH, ny * SCREEN_HEIGHT))
 
-            x_coords = [c[0] for c in screen_coords]
-            y_coords = [c[1] for c in screen_coords]
+            # --- Coordinate Smoothing ---
+            # Apply an exponential moving average to dampen jitter from hand tremors.
+            current_box = (min(c[0] for c in raw_coords), min(c[1] for c in raw_coords),
+                           max(c[0] for c in raw_coords), max(c[1] for c in raw_coords))
 
-            x1, y1 = min(x_coords), min(y_coords)
-            x2, y2 = max(x_coords), max(y_coords)
-            width, height = x2 - x1, y2 - y1
+            if smoothed_coords is None:
+                smoothed_coords = current_box
+            else:
+                smoothed_coords = tuple(
+                    (SMOOTHING_FACTOR * current) + ((1 - SMOOTHING_FACTOR) * smoothed)
+                    for current, smoothed in zip(current_box, smoothed_coords)
+                )
 
-            # Draw semi-transparent overlay on the webcam feed
-            frame_x1, frame_y1 = min(c[0] for c in frame_coords), min(c[1] for c in frame_coords)
-            frame_x2, frame_y2 = max(c[0] for c in frame_coords), max(c[1] for c in frame_coords)
-            cv2.rectangle(overlay_frame, (frame_x1, frame_y1), (frame_x2, frame_y2), (0, 255, 0, 128), -1)
-            frame = cv2.addWeighted(overlay_frame, 0.3, frame, 0.7, 0)
+            sx1, sy1, sx2, sy2 = [int(c) for c in smoothed_coords]
+            s_width, s_height = sx2 - sx1, sy2 - sy1
 
-            # --- LIVE SCREEN PREVIEW WINDOW ---
-            if width > 0 and height > 0:
+            # Clamp coordinates to be within screen bounds. This prevents screenshot errors.
+            sx1 = max(0, sx1)
+            sy1 = max(0, sy1)
+            # Adjust width/height to not exceed screen boundaries from the new sx1, sy1
+            s_width = min(SCREEN_WIDTH - sx1, s_width)
+            s_height = min(SCREEN_HEIGHT - sy1, s_height)
+
+            # --- Capture Trigger: "Raise a Pinky" ---
+            is_trigger_gesture = is_pinky_up(left_hand_landmarks) or is_pinky_up(right_hand_landmarks)
+
+            if not is_capture_mode:
+                if is_trigger_gesture:
+                    is_capture_mode = True
+                    countdown_start_time = time.time()
+                    locked_region = (sx1, sy1, s_width, s_height)
+            else:  # In capture mode
+                if not is_trigger_gesture:  # Lowering the pinky cancels the capture
+                    is_capture_mode = False
+
+                time_left = CAPTURE_COUNTDOWN_SECONDS - (time.time() - countdown_start_time)
+                if time_left > 0:
+                    draw_text(frame, str(int(time_left) + 1), (WEBCAM_WIDTH // 2 - 30, WEBCAM_HEIGHT // 2 + 30), font_scale=3, color=(255, 255, 0))
+                else:  # Countdown finished, take the screenshot
+                    if time.time() - last_screenshot_time > SCREENSHOT_COOLDOWN:
+                        last_screenshot_time = time.time()
+                        try:
+                            screenshot = pyautogui.screenshot(region=locked_region)
+                            filename = os.path.join(SCREENSHOTS_DIR, f"GestureShot_{time.strftime('%Y%m%d-%H%M%S')}.png")
+                            screenshot.save(filename)
+                            draw_text(frame, "Saved!", (WEBCAM_WIDTH // 2 - 100, WEBCAM_HEIGHT // 2), color=(0, 255, 0), font_scale=2)
+                        except Exception as e:
+                            print(f"Error taking screenshot: {e}")
+                    is_capture_mode = False
+
+            # --- VISUAL FEEDBACK ---
+            rect_color = (0, 255, 0)  # Green: Framing
+            if is_snapped and not is_capture_mode: rect_color = (255, 0, 0)  # Blue: Snapped
+            if is_capture_mode: rect_color = (0, 255, 255)  # Yellow: Locked-in
+
+            # Draw the selection area on the webcam feed
+            frame_x1 = int(min(p.x for p in points) * WEBCAM_WIDTH)
+            frame_y1 = int(min(p.y for p in points) * WEBCAM_HEIGHT)
+            frame_x2 = int(max(p.x for p in points) * WEBCAM_WIDTH)
+            frame_y2 = int(max(p.y for p in points) * WEBCAM_HEIGHT)
+
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (frame_x1, frame_y1), (frame_x2, frame_y2), rect_color, -1)
+            frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
+            cv2.rectangle(frame, (frame_x1, frame_y1), (frame_x2, frame_y2), rect_color, 2)
+            draw_text(frame, "Raise a pinky to capture", (10, 50), color=(0, 255, 255))
+
+            # Display a live preview of the selected screen area
+            if s_width > 0 and s_height > 0:
                 try:
-                    preview_pil = pyautogui.screenshot(region=(int(x1), int(y1), int(width), int(height)))
-                    preview_np = np.array(preview_pil)
-                    preview_bgr = cv2.cvtColor(preview_np, cv2.COLOR_RGB2BGR)
-
-                    # Resize preview to a manageable size, maintaining aspect ratio
-                    preview_h, preview_w, _ = preview_bgr.shape
-                    display_width = 600
-                    display_height = int(display_width * (preview_h / preview_w))
-                    if display_height > 0:
-                        resized_preview = cv2.resize(preview_bgr, (display_width, display_height))
-                        cv2.imshow('Screen Preview', resized_preview)
+                    preview_pil = pyautogui.screenshot(region=(sx1, sy1, s_width, s_height))
+                    preview_bgr = cv2.cvtColor(np.array(preview_pil), cv2.COLOR_RGB2BGR)
+                    display_w = 600
+                    display_h = int(display_w * s_height / s_width) if s_width > 0 else 0
+                    if display_h > 0:
+                        cv2.imshow('Screen Preview', cv2.resize(preview_bgr, (display_w, display_h)))
                         preview_window_open = True
-                except Exception:
-                    # Silently ignore errors if the region is invalid for a frame
-                    pass
-
-            draw_text(frame, "Frame area. Pinch one hand to capture.", (10, 50), color=(0, 255, 255))
-
-            # --- SCREENSHOT TRIGGER LOGIC ---
-            is_pinch_trigger = (is_left_pinch and not is_right_pinch) or (is_right_pinch and not is_left_pinch)
-            current_time = time.time()
-
-            if is_pinch_trigger and (current_time - last_screenshot_time > SCREENSHOT_COOLDOWN):
-                last_screenshot_time = current_time
-                try:
-                    # FIX: Cast region values to integers
-                    region_tuple = (int(x1), int(y1), int(width), int(height))
-                    screenshot = pyautogui.screenshot(region=region_tuple)
-
-                    timestamp = time.strftime("%Y%m%d-%H%M%S")
-                    filename = os.path.join(SCREENSHOTS_DIR, f"GestureShot_{timestamp}.png")
-                    screenshot.save(filename)
-                    print(f"Screenshot saved to {filename}")
-                    draw_text(frame, "Screenshot Saved!", (int(WEBCAM_WIDTH / 2) - 150, int(WEBCAM_HEIGHT / 2)), color=(0, 255, 0), font_scale=1.5)
-
                 except Exception as e:
-                    print(f"Error taking screenshot: {e}")
-                    draw_text(frame, "Error!", (int(WEBCAM_WIDTH / 2) - 50, int(WEBCAM_HEIGHT / 2)), color=(0, 0, 255), font_scale=1.5)
+                    # Print an error to the console for debugging, but don't crash.
+                    print(f"Could not create preview: {e}")
         else:
-            # Guide the user and close the preview window if it's open
-            draw_text(frame, "Show both hands to start", (10, 50), color=(0, 0, 255))
-            if preview_window_open:
+            # If hands are not detected, reset the state and close the preview window
+            smoothed_coords = None
+            is_capture_mode = False
+            # Add a grace period before closing the window to prevent flickering
+            if preview_window_open and (time.time() - last_detection_time > 0.5):
                 cv2.destroyWindow('Screen Preview')
                 preview_window_open = False
+            draw_text(frame, "Show both hands to start", (10, 50), color=(0, 0, 255))
 
-        # Display the cooldown timer on screen
-        if time.time() - last_screenshot_time < SCREENSHOT_COOLDOWN:
-            cooldown_remaining = int(SCREENSHOT_COOLDOWN - (time.time() - last_screenshot_time)) + 1
-            draw_text(frame, f"Cooldown: {cooldown_remaining}s", (WEBCAM_WIDTH - 250, 50), color=(255, 165, 0))
-
-        # Show the final frame
         cv2.imshow('GestureShot', frame)
-
-        # Break the loop when 'q' is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
 finally:
     # --- CLEANUP ---
     print("Closing application...")
