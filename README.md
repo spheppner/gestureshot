@@ -4,7 +4,6 @@ Take screenshots of specific screen regions by framing the area with your hands 
 
 GestureShot uses your webcam to track your hand movements, mapping them to your screen. Define a rectangular area using your thumbs and index fingers, and pinch with one hand to instantly capture and save that selection.
 
-!
 ---
 
 ## Features
