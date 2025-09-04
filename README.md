@@ -27,7 +27,7 @@ The application maps the coordinates of your hands from the webcam's view to you
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/YOUR_USERNAME/GestureShot.git](https://github.com/YOUR_USERNAME/GestureShot.git)
+    git clone https://github.com/spheppner/gestureshot.git
     cd GestureShot
     ```
 
