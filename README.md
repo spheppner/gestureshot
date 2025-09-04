@@ -1,33 +1,44 @@
-# GestureShot 📸
+# GestureShot: A Gesture-Controlled Screenshot Tool
 
-Take screenshots of specific screen regions by framing the area with your hands and pinching your fingers!
+GestureShot is a modern, Python-based application that allows you to capture screenshots using hand gestures. By tracking your hands through your webcam, you can intuitively select a region of your screen and save it as an image, all without ever touching your mouse or keyboard.
 
-GestureShot uses your webcam to track your hand movements, mapping them to your screen. Define a rectangular area using your thumbs and index fingers, and pinch with one hand to instantly capture and save that selection.
+The application runs in a sleek, semi-transparent, widget-like window that docks in the top-right corner of your screen, providing a seamless and non-intrusive user experience.
+
+
 
 ---
 
-## Features
+## Key Features
 
--   **Intuitive Control:** Use natural hand gestures to select and capture screen regions.
--   **Real-time Feedback:** A live webcam preview shows your hand tracking and the currently selected area.
--   **Precise Selection:** Frame the exact portion of the screen you need.
--   **Single-Pinch Trigger:** A simple pinch gesture with either your left or right hand is all it takes to capture.
+- **Intuitive Gesture Control:** Use your thumbs and index fingers on both hands to create and position the selection frame.
+- **Stable Trigger Mechanism:** Simply raise the pinky of either hand to lock the frame and start a 3-second capture countdown. Lowering the pinky cancels the countdown.
+- **Modern GUI:** A unified, semi-transparent window built with Tkinter shows both the live camera feed and the screen preview side-by-side.
+- **Clean Screenshots:** The application window automatically hides itself for a fraction of a second during capture, ensuring it never appears in the final screenshot.
+- **Live Preview:** See exactly what you're about to capture in a real-time preview panel.
+- **Jitter-Free Selection:** Coordinate smoothing is applied to hand movements, resulting in a stable and precise selection box.
+- **Edge Snapping:** Easily select the full width or height of your screen by moving your hands to the edges.
 
-## How It Works
+---
 
-The application maps the coordinates of your hands from the webcam's view to your entire screen.
+## Requirements
 
-1.  **Hand Tracking:** It uses the MediaPipe library to detect the landmarks of your thumbs and index fingers on both hands.
-2.  **Coordinate Mapping:** The positions of these four landmarks on the webcam feed are scaled up to your screen's full resolution.
-3.  **Area Definition:** The mapped points of your fingers define the corners of the rectangular area to be captured.
-4.  **Capture Trigger:** When you pinch the thumb and index finger of a *single* hand together, the application takes a screenshot of the entire screen and then crops it down to your selected area.
-5.  **Saving:** The final cropped image is saved to a local `screenshots` directory.
+The application is built with Python and requires the following libraries:
 
-## Installation
+- `opencv-python`
+- `mediapipe`
+- `numpy`
+- `pyautogui`
+- `Pillow`
+
+You can install all dependencies at once using the provided `requirements.txt` file.
+
+---
+
+## Installation & Usage
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/spheppner/gestureshot.git
+    git clone [https://github.com/your-username/GestureShot.git](https://github.com/your-username/GestureShot.git)
     cd GestureShot
     ```
 
@@ -40,27 +51,31 @@ The application maps the coordinates of your hands from the webcam's view to you
     source venv/bin/activate
     ```
 
-3.  **Install the required dependencies:**
+3.  **Install the required packages:**
     ```bash
     pip install -r requirements.txt
     ```
 
-## Usage
-
-1.  Make sure your webcam is connected and uncovered.
-2.  Run the main script from the terminal:
+4.  **Run the application:**
     ```bash
-    python main.py
+    python GestureShot.py
     ```
-3.  An OpenCV window will appear showing your webcam feed.
-4.  Hold both hands up in front of the camera to define the screenshot area with your thumbs and index fingers.
-5.  Pinch the thumb and index finger of *either* your left or right hand together to take the screenshot.
-6.  The captured image will be saved in the `screenshots` folder.
-7.  Press the 'q' key to close the application.
 
-## Acknowledgements
+---
 
-This project was inspired by and builds upon the hand gesture filtering concept from **Harsh Kakadiya**. A big thank you for sharing the foundational code and idea.
+## How to Use
 
--   **Original Project:** [Vision-Gestures](https://github.com/harsh-kakadiya1/computer-vision/tree/main/Vision-Gestures)
--   **Original Author:** [Harsh Kakadiya](https://github.com/harsh-kakadiya1)
+1.  Launch the application. The UI will appear in the top-right corner of your screen.
+2.  Hold both hands up in front of your webcam. A semi-transparent rectangle will appear on your webcam feed, representing the selection area.
+3.  Move your hands to position and resize the selection. The live preview panel will show you what's inside the capture region.
+4.  Once you are happy with the selection, hold your hands steady and **raise the pinky finger** of either your left or right hand.
+5.  A countdown will begin. To cancel, simply lower your pinky.
+6.  Upon completion, the screenshot will be saved to the `screenshots/` directory in the project folder.
+
+---
+
+## Acknowledgment
+
+This project was inspired by and builds upon the concepts demonstrated in a hand gesture filtering project by **Harsh Kakadiya**.
+
+-   **Original Project:** [Vision-Gestures on GitHub](https://github.com/harsh-kakadiya1/computer-vision/tree/main/Vision-Gestures)
