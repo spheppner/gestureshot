@@ -96,7 +96,7 @@ The application is built with Python and requires the following libraries:
 2.  **Create a virtual environment (recommended):**
     ```bash
     python -m venv venv
-    # On Windows: .\\venv\\Scripts\\activate
+    # On Windows: .\venv\Scripts\activate
     # On macOS/Linux: source venv/bin/activate
     ```
 
