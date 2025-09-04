@@ -85,6 +85,12 @@ class GestureAppBase:
         placeholder = Image.new('RGB', (PREVIEW_WIDTH, int(PREVIEW_WIDTH * (self.WEBCAM_HEIGHT / self.WEBCAM_WIDTH))), (46, 46, 46))
         self.placeholder_img = ImageTk.PhotoImage(image=placeholder)
 
+        close_button = tk.Button(main_frame, text="✕", command=self.on_closing,
+                                 bg="#2e2e2e", fg="white", font=("Arial", 10, "bold"),
+                                 borderwidth=0, highlightthickness=0, relief="flat",
+                                 activebackground="#c0392b", activeforeground="white")
+        close_button.place(relx=1.0, x=0, y=-10, anchor="ne")
+
     def position_window(self):
         """
         Forces the window to render, then calculates its final size and
@@ -93,7 +99,7 @@ class GestureAppBase:
         self.root.withdraw()  # Hide the window temporarily
         self.root.update_idletasks()  # Force Tkinter to calculate the window's dimensions
 
-        window_width = PREVIEW_WIDTH + self.WEBCAM_WIDTH + 30
+        window_width = PREVIEW_WIDTH + self.WEBCAM_WIDTH + 70
         x_position = self.SCREEN_WIDTH - window_width
 
         self.root.geometry(f"+{x_position}+0")

@@ -14,7 +14,7 @@ class AnnotationWindow:
 
     def __init__(self, parent_root, image_path):
         self.root = tk.Toplevel(parent_root)
-        self.root.title("Annotate Screenshot")
+        self.root.overrideredirect(True)
         self.root.configure(bg="#1e1e1e")
 
         # --- State ---
@@ -62,7 +62,13 @@ class AnnotationWindow:
         self.root.geometry(f"{new_w + 20}x{new_h + 20}+{x_pos}+{y_pos}")
 
         self.root.focus_force()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_manual_close)
+
+        # --- UI CHANGE: Add a custom close button ---
+        close_button = tk.Button(self.root, text="✕", command=self.on_manual_close,
+                                 bg="#1e1e1e", fg="white", font=("Arial", 12, "bold"),
+                                 borderwidth=0, highlightthickness=0, relief="flat",
+                                 activebackground="#c0392b", activeforeground="white")
+        close_button.place(relx=1.0, x=-5, y=5, anchor="ne")
 
     def on_manual_close(self):
         self.is_closed = True
