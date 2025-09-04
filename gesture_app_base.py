@@ -7,20 +7,23 @@ from PIL import Image, ImageTk
 
 # --- CONFIGURATION ---
 PREVIEW_WIDTH = 480
-# Increased transparency from 0.85 to 0.75
 UI_TRANSPARENCY = 0.75
+
 
 class GestureAppBase:
     """
     The main engine for the gesture control application. It handles the camera,
     GUI, and hand tracking, but delegates all gesture logic to extensions.
     """
+
     def __init__(self, root):
         self.root = root
         self.root.title("Gesture Control")
+        # --- UI BEHAVIOR CHANGES ---
+        # Make the window borderless
+        self.root.overrideredirect(True)
         self.root.configure(bg='#2e2e2e')
         self.root.resizable(False, False)
-        # --- UI BEHAVIOR CHANGES ---
         # Make the window semi-transparent
         self.root.attributes('-alpha', UI_TRANSPARENCY)
         # Make the window always stay on top of other applications
@@ -55,9 +58,10 @@ class GestureAppBase:
         self.WEBCAM_HEIGHT, self.WEBCAM_WIDTH, _ = frame.shape
         self.SCREEN_WIDTH, self.SCREEN_HEIGHT = pyautogui.size()
 
-        # --- Setup GUI ---
+        # --- Setup GUI and Position Window ---
         self.setup_gui()
-        self.root.after(100, self.position_window)
+        # This is now called directly and uses a more robust method
+        self.position_window()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.update_frame()
 
@@ -82,16 +86,23 @@ class GestureAppBase:
         self.placeholder_img = ImageTk.PhotoImage(image=placeholder)
 
     def position_window(self):
-        """Calculates and sets the window's position to the top-right corner."""
-        self.root.update_idletasks() # Ensures window dimensions are up-to-date
-        window_width = self.root.winfo_width()
+        """
+        Forces the window to render, then calculates its final size and
+        moves it to the top-right corner of the screen.
+        """
+        self.root.withdraw()  # Hide the window temporarily
+        self.root.update_idletasks()  # Force Tkinter to calculate the window's dimensions
+
+        window_width = PREVIEW_WIDTH + self.WEBCAM_WIDTH + 30
         x_position = self.SCREEN_WIDTH - window_width
+
         self.root.geometry(f"+{x_position}+0")
+        self.root.deiconify()  # Make the window visible again at the correct position
 
     def on_closing(self):
         print("Closing application...")
         if self.active_extension and hasattr(self.active_extension, 'on_close'):
-             self.active_extension.on_close()
+            self.active_extension.on_close()
         self.cap.release()
         self.hands.close()
         self.root.destroy()

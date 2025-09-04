@@ -6,9 +6,11 @@ import os
 
 class AnnotationWindow:
     """
-    A Toplevel window for displaying and drawing on an image.
+    A Toplevel window for displaying and drawing on an image, with
+    input smoothing for the cursor.
     """
     ACTION_GRACE_PERIOD = 1.0  # Ignore actions for 1 second after creation
+    SMOOTHING_FACTOR = 0.3  # Lower is smoother but has more "drag"
 
     def __init__(self, parent_root, image_path):
         self.root = tk.Toplevel(parent_root)
@@ -17,15 +19,18 @@ class AnnotationWindow:
 
         # --- State ---
         self.is_closed = False
-        self.creation_time = time.time()  # Record when the window is created
+        self.creation_time = time.time()
         self.image_path = image_path
         self.original_image = Image.open(image_path).convert("RGBA")
         self.display_image = self.original_image.copy()
         self.draw = ImageDraw.Draw(self.display_image)
-        self.last_cursor_pos = None
+        self.last_smoothed_pos = None  # Stores previous smoothed position for drawing lines
         self.is_drawing = False
         self.message = ""
         self.message_end_time = 0
+
+        # --- Smoothing State ---
+        self.smoothed_cursor_pos = None  # Stores the current smoothed position
 
         try:
             self.font = ImageFont.truetype("arial.ttf", 30)
@@ -60,36 +65,45 @@ class AnnotationWindow:
         self.root.protocol("WM_DELETE_WINDOW", self.on_manual_close)
 
     def on_manual_close(self):
-        """Handle manual window close via 'X' button."""
         self.is_closed = True
         self.root.destroy()
 
-    def update_cursor(self, cursor_pos, is_drawing):
-        """Updates the cursor position and draws if needed."""
+    def update_cursor(self, raw_cursor_pos, is_drawing):
+        """Smooths the cursor position and draws if needed."""
         if not self.root.winfo_exists(): return
 
-        if self.is_drawing and self.last_cursor_pos:
-            # Scale coordinates to original image size for drawing
-            orig_x1 = int(self.last_cursor_pos[0] * self.original_image.width)
-            orig_y1 = int(self.last_cursor_pos[1] * self.original_image.height)
-            orig_x2 = int(cursor_pos[0] * self.original_image.width)
-            orig_y2 = int(cursor_pos[1] * self.original_image.height)
+        # --- Apply Exponential Moving Average for Smoothing ---
+        if self.smoothed_cursor_pos is None:
+            self.smoothed_cursor_pos = raw_cursor_pos
+        else:
+            sx = (self.SMOOTHING_FACTOR * raw_cursor_pos[0] +
+                  (1 - self.SMOOTHING_FACTOR) * self.smoothed_cursor_pos[0])
+            sy = (self.SMOOTHING_FACTOR * raw_cursor_pos[1] +
+                  (1 - self.SMOOTHING_FACTOR) * self.smoothed_cursor_pos[1])
+            self.smoothed_cursor_pos = (sx, sy)
+
+        if is_drawing and self.last_smoothed_pos:
+            # Scale smoothed coordinates to original image size for drawing
+            orig_x1 = int(self.last_smoothed_pos[0] * self.original_image.width)
+            orig_y1 = int(self.last_smoothed_pos[1] * self.original_image.height)
+            orig_x2 = int(self.smoothed_cursor_pos[0] * self.original_image.width)
+            orig_y2 = int(self.smoothed_cursor_pos[1] * self.original_image.height)
             self.draw.line([(orig_x1, orig_y1), (orig_x2, orig_y2)], fill="red", width=8)
 
-        self.last_cursor_pos = cursor_pos
+        self.last_smoothed_pos = self.smoothed_cursor_pos
         self.is_drawing = is_drawing
         self._redraw_canvas()
 
     def _redraw_canvas(self):
-        """Redraws the canvas with the image and cursor."""
+        """Redraws the canvas with the image and smoothed cursor."""
         if not self.root.winfo_exists(): return
 
         resized_img = self.display_image.resize(self.canvas_size, Image.Resampling.LANCZOS)
 
         draw_display = ImageDraw.Draw(resized_img)
-        if self.last_cursor_pos:
-            cx = int(self.last_cursor_pos[0] * self.canvas_size[0])
-            cy = int(self.last_cursor_pos[1] * self.canvas_size[1])
+        if self.smoothed_cursor_pos:
+            cx = int(self.smoothed_cursor_pos[0] * self.canvas_size[0])
+            cy = int(self.smoothed_cursor_pos[1] * self.canvas_size[1])
             cursor_color = "red" if self.is_drawing else "cyan"
             draw_display.ellipse((cx - 8, cy - 8, cx + 8, cy + 8), fill=cursor_color, outline="black")
 
@@ -106,6 +120,8 @@ class AnnotationWindow:
             return
 
         try:
+            if not os.path.exists("annotated"):
+                os.makedirs("annotated")
             base = os.path.splitext(os.path.basename(self.image_path))[0]
             filename = os.path.join("annotated", f"{base}_annotated_{time.strftime('%H%M%S')}.png")
             self.display_image.save(filename)
@@ -116,7 +132,7 @@ class AnnotationWindow:
             print(self.message)
         self.message_end_time = time.time() + 2.0
         self._redraw_canvas()
-        self.root.after(1000, self.close)  # Close 1 second after saving
+        self.root.after(1000, self.close)
 
     def close(self):
         """Closes the window, ignoring calls within the grace period."""
