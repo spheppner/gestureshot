@@ -89,8 +89,8 @@ The application is built with Python and requires the following libraries:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/spheppner/gestureshot.git
-    cd gestureshot
+    git clone https://github.com/spheppner/GestureShot.git
+    cd GestureShot
     ```
 
 2.  **Create a virtual environment (recommended):**
