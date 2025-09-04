@@ -6,9 +6,10 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 # --- CONFIGURATION ---
+WEBCAM_REQ_WIDTH = 640
+WEBCAM_REQ_HEIGHT = 480
 PREVIEW_WIDTH = 480
 UI_TRANSPARENCY = 0.75
-
 
 class GestureAppBase:
     """
@@ -19,14 +20,10 @@ class GestureAppBase:
     def __init__(self, root):
         self.root = root
         self.root.title("Gesture Control")
-        # --- UI BEHAVIOR CHANGES ---
-        # Make the window borderless
         self.root.overrideredirect(True)
         self.root.configure(bg='#2e2e2e')
         self.root.resizable(False, False)
-        # Make the window semi-transparent
         self.root.attributes('-alpha', UI_TRANSPARENCY)
-        # Make the window always stay on top of other applications
         self.root.attributes('-topmost', True)
 
         # --- State Variables ---
@@ -45,6 +42,9 @@ class GestureAppBase:
         self.mp_drawing = mp.solutions.drawing_utils
 
         self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_REQ_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_REQ_HEIGHT)
+
         if not self.cap.isOpened():
             print("Error: Could not open webcam.")
             return
@@ -60,7 +60,6 @@ class GestureAppBase:
 
         # --- Setup GUI and Position Window ---
         self.setup_gui()
-        # This is now called directly and uses a more robust method
         self.position_window()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.update_frame()
@@ -82,7 +81,9 @@ class GestureAppBase:
         self.preview_label = ttk.Label(main_frame)
         self.preview_label.grid(column=1, row=1, padx=5)
 
-        placeholder = Image.new('RGB', (PREVIEW_WIDTH, int(PREVIEW_WIDTH * (self.WEBCAM_HEIGHT / self.WEBCAM_WIDTH))), (46, 46, 46))
+        aspect_ratio = self.WEBCAM_HEIGHT / self.WEBCAM_WIDTH if self.WEBCAM_WIDTH > 0 else 1
+        placeholder_h = int(PREVIEW_WIDTH * aspect_ratio)
+        placeholder = Image.new('RGB', (PREVIEW_WIDTH, placeholder_h), (46, 46, 46))
         self.placeholder_img = ImageTk.PhotoImage(image=placeholder)
 
         close_button = tk.Button(main_frame, text="✕", command=self.on_closing,
@@ -128,7 +129,9 @@ class GestureAppBase:
 
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame.flags.writeable = False
         results = self.hands.process(rgb_frame)
+        rgb_frame.flags.writeable = True
 
         if self.active_extension:
             self.active_extension.process_gestures(results, frame)

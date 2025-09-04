@@ -1,30 +1,39 @@
 import cv2
-import time
-import os
 import pyautogui
+import os
+import time
 from PIL import Image
 from .base_extension import GestureExtension
 
 # --- CONFIGURATION ---
+SCREENSHOTS_DIR = "screenshots"
 EDGE_MARGIN = 0.08
 SMOOTHING_FACTOR = 0.2
 CAPTURE_COUNTDOWN_SECONDS = 3
 SCREENSHOT_COOLDOWN = 3
+PREVIEW_WIDTH = 480
+PREVIEW_UPDATE_INTERVAL = 0.2  # Update preview 5 times per second (1 / 0.2 = 5)
 
 
 class ScreenshotExtension(GestureExtension):
-    """
-    Handles two-handed gesture control for selecting and capturing screenshots.
-    """
-
     def __init__(self, parent_app):
         super().__init__(parent_app)
+        self.mp_hands = self.app.mp_hands
+
+        # --- State ---
         self.smoothed_coords = None
         self.is_capture_mode = False
         self.countdown_start_time = 0
         self.locked_region = None
         self.last_screenshot_time = 0
         self.saved_message_end_time = 0
+
+        # --- Performance State ---
+        self.last_preview_update_time = 0
+        self.cached_preview_image = None
+
+        if not os.path.exists(SCREENSHOTS_DIR):
+            os.makedirs(SCREENSHOTS_DIR)
 
     def check_for_activation(self, results, frame):
         # Activate if two hands are detected
@@ -37,7 +46,6 @@ class ScreenshotExtension(GestureExtension):
             self.app.release_active_extension()
             return
 
-        # --- Re-implementing the original gesture logic ---
         left_hand_landmarks, right_hand_landmarks = None, None
         for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
             label = results.multi_handedness[hand_idx].classification[0].label
@@ -65,42 +73,70 @@ class ScreenshotExtension(GestureExtension):
         self._handle_capture_mode(frame, is_trigger_gesture, (sx1, sy1, s_width, s_height))
 
     def draw_feedback(self, frame):
-        # Draw countdown or "Saved!" message
-        if time.time() < self.saved_message_end_time:
-            self.app.draw_text(frame, "Saved!", (self.app.WEBCAM_WIDTH // 2 - 100, self.app.WEBCAM_HEIGHT // 2), color=(0, 255, 0), font_scale=2)
+        # This is where the preview is generated, now throttled
+        preview_img = self._update_preview()
 
-        # Draw selection rectangle and text
+        # Draw visual feedback on the webcam frame
         if self.smoothed_coords:
-            sx1, sy1, sx2, sy2 = [int(c) for c in self.smoothed_coords]
-            s_width, s_height = self._clamp_coordinates(sx1, sy1, sx2 - sx1, sy2 - sy1)
+            points_norm = [
+                (c[0] / self.app.SCREEN_WIDTH, c[1] / self.app.SCREEN_HEIGHT)
+                for c in [(self.smoothed_coords[0], self.smoothed_coords[1]),
+                          (self.smoothed_coords[2], self.smoothed_coords[3])]
+            ]
 
             rect_color = (0, 255, 0)  # Green: Framing
             if self.is_capture_mode: rect_color = (0, 255, 255)  # Yellow: Locked-in
 
-            # Draw semi-transparent rectangle on webcam feed
+            frame_x1 = int(points_norm[0][0] * self.app.WEBCAM_WIDTH)
+            frame_y1 = int(points_norm[0][1] * self.app.WEBCAM_HEIGHT)
+            frame_x2 = int(points_norm[1][0] * self.app.WEBCAM_WIDTH)
+            frame_y2 = int(points_norm[1][1] * self.app.WEBCAM_HEIGHT)
+
             overlay = frame.copy()
-            frame_x1 = int(min(sx1, sx2) / self.app.SCREEN_WIDTH * self.app.WEBCAM_WIDTH)
-            frame_y1 = int(min(sy1, sy2) / self.app.SCREEN_HEIGHT * self.app.WEBCAM_HEIGHT)
-            frame_x2 = int(max(sx1, sx2) / self.app.SCREEN_WIDTH * self.app.WEBCAM_WIDTH)
-            frame_y2 = int(max(sy1, sy2) / self.app.SCREEN_HEIGHT * self.app.WEBCAM_HEIGHT)
             cv2.rectangle(overlay, (frame_x1, frame_y1), (frame_x2, frame_y2), rect_color, -1)
             frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
             cv2.rectangle(frame, (frame_x1, frame_y1), (frame_x2, frame_y2), rect_color, 2)
-            self.app.draw_text(frame, "Raise a pinky to capture", (10, 30))
+            self.app.draw_text(frame, "Raise pinky to capture", (10, 30))
 
-            # Generate screen preview
-            preview_img = None
-            if s_width > 0 and s_height > 0:
+        if self.is_capture_mode:
+            time_left = CAPTURE_COUNTDOWN_SECONDS - (time.time() - self.countdown_start_time)
+            if time_left > 0:
+                self.app.draw_text(frame, str(int(time_left) + 1), (self.app.WEBCAM_WIDTH // 2 - 30, self.app.WEBCAM_HEIGHT // 2 + 30), font_scale=3, color=(255, 255, 0))
+
+        if time.time() < self.saved_message_end_time:
+            self.app.draw_text(frame, "Saved!", (self.app.WEBCAM_WIDTH // 2 - 100, self.app.WEBCAM_HEIGHT // 2), color=(0, 255, 0), font_scale=2)
+
+        return frame, preview_img
+
+    def _update_preview(self):
+        """
+        Takes a screenshot for the preview, but only if enough time has passed
+        since the last one. Otherwise, returns the cached image.
+        """
+        current_time = time.time()
+        if current_time - self.last_preview_update_time < PREVIEW_UPDATE_INTERVAL:
+            return self.cached_preview_image  # Return the old one
+
+        self.last_preview_update_time = current_time
+
+        if self.smoothed_coords:
+            sx1, sy1, sx2, sy2 = [int(c) for c in self.smoothed_coords]
+            width, height = sx2 - sx1, sy2 - sy1
+
+            if width > 0 and height > 0:
                 try:
-                    preview_pil = pyautogui.screenshot(region=(sx1, sy1, s_width, s_height))
-                    aspect_ratio = s_height / s_width if s_width > 0 else 1
-                    display_h = int(480 * aspect_ratio)
-                    preview_img = preview_pil.resize((480, display_h), Image.Resampling.LANCZOS)
-                except Exception:
-                    preview_img = None
-            return frame, preview_img
+                    preview_pil = pyautogui.screenshot(region=(sx1, sy1, width, height))
+                    aspect_ratio = height / width if width > 0 else 1
+                    display_h = int(PREVIEW_WIDTH * aspect_ratio)
+                    # OPTIMIZATION: Use a faster resizing algorithm for the preview
+                    self.cached_preview_image = preview_pil.resize((PREVIEW_WIDTH, display_h), Image.Resampling.BILINEAR)
+                    return self.cached_preview_image
+                except Exception as e:
+                    # print(f"Could not create preview: {e}") # Can be noisy
+                    pass
 
-        return frame, None
+        self.cached_preview_image = None
+        return None
 
     def _handle_capture_mode(self, frame, is_trigger_gesture, region):
         if not self.is_capture_mode:
@@ -121,12 +157,13 @@ class ScreenshotExtension(GestureExtension):
                     self.last_screenshot_time = time.time()
                     try:
                         self.app.root.withdraw()
+                        time.sleep(0.1)
                         screenshot = pyautogui.screenshot(region=self.locked_region)
                         self.app.root.deiconify()
 
-                        filename = os.path.join("screenshots", f"GestureShot_{time.strftime('%Y%m%d-%H%M%S')}.png")
+                        filename = os.path.join(SCREENSHOTS_DIR, f"GestureShot_{time.strftime('%Y%m%d-%H%M%S')}.png")
                         screenshot.save(filename)
-                        self.app.last_screenshot_path = filename  # IMPORTANT: Update the app state
+                        self.app.last_screenshot_path = filename
                         self.saved_message_end_time = time.time() + 2
                     except Exception as e:
                         print(f"Error taking screenshot: {e}")
