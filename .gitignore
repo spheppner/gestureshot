@@ -1,5 +1,6 @@
 # Screenshot folder inside project
 screenshots/
+annotated/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
