@@ -1,7 +1,12 @@
+# GestureShot: A Hand Gesture-Based Screenshot Tool
+#
+# This script uses a webcam to track hand gestures, allowing a user to
+# select a region on the screen and capture it in a modern, widget-like GUI.
+#
 # Acknowledgment:
 # Inspired by the hand gesture filtering project by Harsh Kakadiya.
 # Original Project: https://github.com/harsh-kakadiya1/computer-vision/tree/main/Vision-Gestures
-
+#
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -19,6 +24,7 @@ SMOOTHING_FACTOR = 0.2
 CAPTURE_COUNTDOWN_SECONDS = 3
 SCREENSHOT_COOLDOWN = 3
 PREVIEW_WIDTH = 480  # The width of the preview panel in the GUI
+UI_TRANSPARENCY = 0.85  # Window transparency (0.0=invisible, 1.0=opaque)
 
 
 class GestureShotApp:
@@ -32,6 +38,8 @@ class GestureShotApp:
         self.root.title("GestureShot")
         self.root.configure(bg='#2e2e2e')
         self.root.resizable(False, False)
+        # Make the window semi-transparent to solve the preview "mirror" effect
+        self.root.attributes('-alpha', UI_TRANSPARENCY)
 
         # --- INITIALIZE STATE VARIABLES ---
         self.smoothed_coords = None
@@ -39,6 +47,7 @@ class GestureShotApp:
         self.countdown_start_time = 0
         self.locked_region = None
         self.last_screenshot_time = 0
+        self.saved_message_end_time = 0
 
         # --- SETUP DIRECTORY ---
         if not os.path.exists(SCREENSHOTS_DIR):
@@ -69,13 +78,11 @@ class GestureShotApp:
         # --- SETUP TKINTER GUI ---
         self.setup_gui()
 
-        # --- POSITION WINDOW IN TOP-RIGHT CORNER ---
-        self.position_window()
+        # --- POSITION WINDOW IN TOP-RIGHT CORNER (after a delay) ---
+        # This delay ensures the window is fully rendered before calculating its size.
+        self.root.after(100, self.position_window)
 
-        # Set the protocol for closing the window
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-        # Start the main update loop
         self.update_frame()
 
     def setup_gui(self):
@@ -97,8 +104,7 @@ class GestureShotApp:
         self.preview_label = ttk.Label(main_frame)
         self.preview_label.grid(column=1, row=1, padx=5)
 
-        # Placeholder for when preview is not active
-        placeholder = Image.new('RGB', (self.WEBCAM_WIDTH, self.WEBCAM_HEIGHT), (46, 46, 46))
+        placeholder = Image.new('RGB', (PREVIEW_WIDTH, int(PREVIEW_WIDTH * (self.WEBCAM_HEIGHT / self.WEBCAM_WIDTH))), (46, 46, 46))
         self.placeholder_img = ImageTk.PhotoImage(image=placeholder)
 
     def position_window(self):
@@ -144,19 +150,21 @@ class GestureShotApp:
             self.is_capture_mode = False
             self.draw_text(frame, "Show both hands to start", (10, 50), color=(0, 0, 255))
 
-        # --- UPDATE TKINTER IMAGE WIDGETS ---
-        # Webcam Feed
+        # Show "Saved!" message if a screenshot was recently taken.
+        if time.time() < self.saved_message_end_time:
+            self.draw_text(frame, "Saved!", (self.WEBCAM_WIDTH // 2 - 100, self.WEBCAM_HEIGHT // 2), color=(0, 255, 0), font_scale=2)
+
+        # Convert final processed frame to a Tkinter-compatible image.
         webcam_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         webcam_photo = ImageTk.PhotoImage(image=webcam_img)
         self.webcam_label.configure(image=webcam_photo)
-        self.webcam_label.image = webcam_photo  # Keep a reference!
+        self.webcam_label.image = webcam_photo
 
-        # Screen Preview
         if preview_img is not None:
             preview_photo = ImageTk.PhotoImage(image=preview_img)
             self.preview_label.configure(image=preview_photo)
             self.preview_label.image = preview_photo
-        else:  # Show placeholder if no preview
+        else:
             self.preview_label.configure(image=self.placeholder_img)
             self.preview_label.image = self.placeholder_img
 
@@ -186,12 +194,9 @@ class GestureShotApp:
         if s_width > 0 and s_height > 0:
             try:
                 preview_pil = pyautogui.screenshot(region=(sx1, sy1, s_width, s_height))
-
-                # Resize preview to fit the GUI panel
-                aspect_ratio = s_height / s_width
+                aspect_ratio = s_height / s_width if s_width > 0 else 1
                 display_h = int(PREVIEW_WIDTH * aspect_ratio)
                 preview_img = preview_pil.resize((PREVIEW_WIDTH, display_h), Image.Resampling.LANCZOS)
-
             except Exception as e:
                 print(f"Could not create preview: {e}")
 
@@ -215,12 +220,17 @@ class GestureShotApp:
                 if time.time() - self.last_screenshot_time > SCREENSHOT_COOLDOWN:
                     self.last_screenshot_time = time.time()
                     try:
+                        self.root.withdraw()  # Hide window before screenshot
                         screenshot = pyautogui.screenshot(region=self.locked_region)
+                        self.root.deiconify()  # Show window again immediately
+
                         filename = os.path.join(SCREENSHOTS_DIR, f"GestureShot_{time.strftime('%Y%m%d-%H%M%S')}.png")
                         screenshot.save(filename)
-                        self.draw_text(frame, "Saved!", (self.WEBCAM_WIDTH // 2 - 100, self.WEBCAM_HEIGHT // 2), color=(0, 255, 0), font_scale=2)
+                        self.saved_message_end_time = time.time() + 2  # Show "Saved!" for 2 seconds
                     except Exception as e:
                         print(f"Error taking screenshot: {e}")
+                        if self.root.state() == 'withdrawn':  # Ensure window reappears on error
+                            self.root.deiconify()
                 self.is_capture_mode = False
         return frame
 
@@ -292,3 +302,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = GestureShotApp(root)
     root.mainloop()
+
